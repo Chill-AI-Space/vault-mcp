@@ -11,7 +11,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && cp src/dashboard/index.html dist/dashboard/",
+    "build": "tsc && cp src/dashboard/*.html dist/dashboard/",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "serve": "node dist/index.js serve",

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vault MCP — Add Credential</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px;
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 32px; width: 100%; max-width: 480px;
+  }
+  h1 { font-size: 18px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  h1 .lock { font-size: 22px; }
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label {
+    display: block; color: var(--muted); font-size: 12px;
+    margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .form-group input, .form-group select {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg);
+    color: var(--text); font-size: 14px; outline: none;
+  }
+  .form-group input:focus, .form-group select:focus {
+    border-color: var(--accent);
+  }
+  .form-row { display: flex; gap: 12px; }
+  .form-row .form-group { flex: 1; }
+  .selectors { margin-top: 8px; padding: 12px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); }
+  .selectors-title { font-size: 11px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .selectors .form-group { margin-bottom: 8px; }
+  .selectors .form-group:last-child { margin-bottom: 0; }
+  .selectors input { font-size: 12px; padding: 6px 8px; font-family: monospace; }
+  button[type="submit"] {
+    width: 100%; padding: 12px; border-radius: 8px; border: none;
+    background: var(--accent); color: var(--bg); font-size: 14px;
+    font-weight: 600; cursor: pointer; margin-top: 8px;
+  }
+  button[type="submit"]:hover { opacity: 0.9; }
+  button[type="submit"]:disabled { opacity: 0.5; cursor: not-allowed; }
+  .success {
+    text-align: center; padding: 48px 24px;
+  }
+  .success .check { font-size: 48px; margin-bottom: 16px; }
+  .success h2 { color: var(--green); margin-bottom: 8px; }
+  .success p { color: var(--muted); font-size: 13px; }
+  .hidden { display: none; }
+  .security-note {
+    display: flex; align-items: flex-start; gap: 8px;
+    background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.2);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 20px;
+    font-size: 12px; color: var(--green);
+  }
+  .security-note .icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div id="form-view">
+    <h1><span class="lock">&#128274;</span> Add Credential</h1>
+    <p class="subtitle">Your password goes directly to the encrypted vault. The AI agent never sees it.</p>
+
+    <div class="security-note">
+      <span class="icon">&#9989;</span>
+      <span>This form submits directly to your local Vault. Credentials are encrypted with AES-256-GCM and never sent to any AI model.</span>
+    </div>
+
+    <form id="add-form" onsubmit="return submitForm(event)">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Site ID</label>
+          <input name="siteId" id="siteId" required placeholder="github">
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select name="serviceType" id="serviceType" onchange="toggleType(this.value)">
+            <option value="web_login">Web Login</option>
+            <option value="api_key">API Key</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="web-fields">
+        <div class="form-group">
+          <label>Email / Username</label>
+          <input name="email" placeholder="user@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input name="password" type="password" required>
+        </div>
+        <div class="form-group">
+          <label>Login URL</label>
+          <input name="loginUrl" placeholder="https://example.com/login">
+        </div>
+        <div class="selectors">
+          <div class="selectors-title">CSS Selectors (auto-detected if left default)</div>
+          <div class="form-group">
+            <label>Email field</label>
+            <input name="emailSel" value='input[type="email"]'>
+          </div>
+          <div class="form-group">
+            <label>Password field</label>
+            <input name="passwordSel" value='input[type="password"]'>
+          </div>
+          <div class="form-group">
+            <label>Submit button</label>
+            <input name="submitSel" value='button[type="submit"]'>
+          </div>
+        </div>
+      </div>
+
+      <div id="api-fields" class="hidden">
+        <div class="form-group">
+          <label>API Key</label>
+          <input name="apiKey" type="password">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Header name</label>
+            <input name="headerName" value="Authorization">
+          </div>
+          <div class="form-group">
+            <label>Value prefix</label>
+            <input name="headerPrefix" value="Bearer ">
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" id="submit-btn">Add to Vault</button>
+    </form>
+  </div>
+
+  <div id="success-view" class="success hidden">
+    <div class="check">&#9989;</div>
+    <h2>Credential Saved</h2>
+    <p>Encrypted and stored locally. You can close this tab.<br>The AI agent will now be able to use <strong id="saved-site"></strong> without seeing your password.</p>
+  </div>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+const prefillSite = params.get('site') || '';
+const prefillType = params.get('type') || 'web_login';
+
+if (prefillSite) document.getElementById('siteId').value = prefillSite;
+if (prefillType) {
+  document.getElementById('serviceType').value = prefillType;
+  toggleType(prefillType);
+}
+
+function toggleType(type) {
+  document.getElementById('web-fields').classList.toggle('hidden', type !== 'web_login');
+  document.getElementById('api-fields').classList.toggle('hidden', type !== 'api_key');
+}
+
+async function submitForm(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Encrypting...';
+
+  const f = new FormData(e.target);
+  const type = f.get('serviceType');
+  const body = { siteId: f.get('siteId'), serviceType: type, token };
+
+  if (type === 'web_login') {
+    Object.assign(body, {
+      email: f.get('email'), password: f.get('password'),
+      loginUrl: f.get('loginUrl'),
+      selectors: { email: f.get('emailSel'), password: f.get('passwordSel'), submit: f.get('submitSel') }
+    });
+  } else {
+    Object.assign(body, {
+      apiKey: f.get('apiKey'), headerName: f.get('headerName'), headerPrefix: f.get('headerPrefix')
+    });
+  }
+
+  try {
+    const res = await fetch('/api/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    if (res.ok) {
+      document.getElementById('saved-site').textContent = body.siteId;
+      document.getElementById('form-view').classList.add('hidden');
+      document.getElementById('success-view').classList.remove('hidden');
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Add to Vault';
+      alert('Error saving credential');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = 'Add to Vault';
+    alert('Connection error: ' + err.message);
+  }
+}
+</script>
+</body>
+</html>

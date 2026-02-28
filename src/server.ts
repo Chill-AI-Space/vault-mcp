@@ -6,6 +6,7 @@ import { vaultLogin } from './tools/vault-login.js';
 import { vaultApiRequest } from './tools/vault-api.js';
 import { vaultList } from './tools/vault-list.js';
 import { vaultStatus } from './tools/vault-status.js';
+import { vaultAdd } from './tools/vault-add.js';
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -76,6 +77,20 @@ export function createServer(): McpServer {
     async ({ site_id }) => {
       await ensureInit();
       const result = await vaultStatus(store, audit, site_id);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'vault_add',
+    'Securely add a new credential to the vault. Opens a browser form where the user enters their password directly — the password NEVER passes through the AI agent. IMPORTANT: Never ask the user to type passwords in chat. Always use this tool instead.',
+    {
+      site_id: z.string().optional().describe('Pre-fill the site identifier (e.g. "github")'),
+      service_type: z.enum(['web_login', 'api_key']).optional().describe('Type of credential (default: web_login)'),
+    },
+    async ({ site_id, service_type }) => {
+      await ensureInit();
+      const result = await vaultAdd(store, audit, site_id, service_type);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
   );

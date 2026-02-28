@@ -4,101 +4,214 @@ MCP server for credential isolation in LLM agents. Your bot uses passwords and A
 
 ## The Problem
 
-When an AI agent needs to log into a website or call an API, the typical flow leaks credentials:
-
-```mermaid
-flowchart LR
-    User["👤 User"] -->|"password in chat"| LLM["🧠 LLM"]
-    LLM -->|password in context| Site["🌍 Website"]
-    style LLM fill:#f85149,color:#fff
 ```
-
-**The password is in the LLM's context window** — stored in conversation history, potentially logged, visible in session exports.
+  User                     LLM                    Website
+   │                        │                        │
+   │  "password: MyP@ss!"   │                        │
+   ├───────────────────────►│                        │
+   │                        │──── MyP@ss! ──────────►│
+   │                        │                        │
+   │                        │◄──── 200 OK ───────────│
+   │                        │                        │
+   ▼                        ▼                        ▼
+                     ┌──────────────┐
+                     │ MyP@ss! is   │
+                     │ now stored   │
+                     │ in LLM       │
+                     │ context,     │
+                     │ conversation │
+                     │ history,     │
+                     │ session logs │
+                     └──────────────┘
+```
 
 ## The Solution
 
-Vault MCP adds an encrypted layer between the agent and credentials:
-
-```mermaid
-flowchart LR
-    User["👤 User"] -->|"password via browser form"| Vault["🔒 Vault"]
-    Vault -->|"encrypted storage"| Store["🗄️ AES-256-GCM"]
-    LLM["🧠 LLM"] -->|"vault_login('jira')"| Vault
-    Vault -->|"fills form via CDP"| Site["🌍 Website"]
-    Vault -->|"status: success"| LLM
-    style Vault fill:#3fb950,color:#fff
-    style LLM fill:#58a6ff,color:#fff
+```
+  User          Browser Form       Vault MCP         LLM          Website
+   │            (localhost)          │                 │              │
+   │  ●●●●●●●●    │                 │                 │              │
+   ├──────────────►│                 │                 │              │
+   │               │── encrypt ─────►│                 │              │
+   │               │                 │◄── vault_login ─┤              │
+   │               │                 │── fill form ───────────────────►│
+   │               │                 │◄──── 200 OK ───────────────────┤
+   │               │                 │── { status: ok }─►│            │
+   │               │                 │                 │              │
+   ▼               ▼                 ▼                 ▼              ▼
+                              ┌──────────────┐  ┌──────────────┐
+                              │ Password:    │  │ LLM context: │
+                              │ AES-256-GCM  │  │              │
+                              │ encrypted    │  │ "status: ok" │
+                              │ on disk      │  │ (no password)│
+                              └──────────────┘  └──────────────┘
 ```
 
-**The LLM never sees the password.** It only sends commands (`vault_login`) and receives status (`success`).
+---
 
-## How It Works
+## Scenarios
 
-### Adding a Credential
+### Scenario 1: First-time Login (vault_add → vault_login)
 
-When the agent needs credentials it doesn't have, it calls `vault_add()`. A browser form opens — the password goes directly to the encrypted store, bypassing the LLM entirely:
+The agent needs credentials it doesn't have. It calls `vault_add()` — a browser form opens where you enter the password. Then `vault_login()` fills the form via Chrome.
 
-```mermaid
-sequenceDiagram
-    participant User as 👤 User
-    participant LLM as 🧠 LLM
-    participant Vault as 🔒 Vault MCP
-    participant Browser as 🌐 Browser (localhost)
-    participant Store as 🗄️ Encrypted Store
-
-    User->>LLM: "Log me into Jira"
-    LLM->>Vault: vault_add({ site_id: "jira" })
-    Vault->>Browser: Opens localhost:9900/add?site=jira
-    Note over Browser: User sees a form with<br/>password field masked ●●●●
-    User->>Browser: Fills email + password
-    Browser->>Store: AES-256-GCM encrypt → save
-    Store-->>Vault: ✅ Credential saved
-    Vault-->>LLM: { status: "success", site_id: "jira" }
-    Note over LLM: Password was NEVER<br/>in the LLM context
+```
+  User              Claude Code           Vault MCP            Chrome
+   │                    │                     │                   │
+   │ "Log me into       │                     │                   │
+   │  Jira"             │                     │                   │
+   ├───────────────────►│                     │                   │
+   │                    │── vault_list() ────►│                   │
+   │                    │◄─ { credentials:[] }┤                   │
+   │                    │                     │                   │
+   │                    │── vault_add ───────►│                   │
+   │                    │   { site: "jira" }  │                   │
+   │                    │                     │                   │
+   │   ┌────────────────────────────┐         │                   │
+   │   │ Browser opens             │         │                   │
+   │   │ localhost:9900/add         │         │                   │
+   │   │                           │         │                   │
+   │   │ Site ID:  [jira]          │         │                   │
+   │   │ Email:    [me@work.com]   │         │                   │
+   │   │ Password: [●●●●●●●●●●]   │         │                   │
+   │   │ URL:      [jira.com/login]│         │                   │
+   │   │                           │         │                   │
+   │   │ [Add to Vault]            │         │                   │
+   │   └────────────┬───────────────┘         │                   │
+   │                │                         │                   │
+   │                └── POST (encrypted) ────►│                   │
+   │                                          │                   │
+   │                    │◄─ { status: ok } ───┤                   │
+   │                    │   site_id: "jira"   │                   │
+   │                    │                     │                   │
+   │                    │   (no password      │                   │
+   │                    │    in this response) │                   │
+   │                    │                     │                   │
+   │                    │── vault_login ─────►│                   │
+   │                    │   { site: "jira" }  │── decrypt ──┐     │
+   │                    │                     │◄────────────┘     │
+   │                    │                     │── fill email ────►│
+   │                    │                     │── fill pass  ────►│
+   │                    │                     │── click submit ──►│
+   │                    │                     │◄─ page loaded ───┤
+   │                    │                     │── clear pass ────►│
+   │                    │                     │                   │
+   │                    │◄─ { status: ok,  ───┤                   │
+   │                    │    title: "Jira     │                   │
+   │                    │    Dashboard" }     │                   │
+   │                    │                     │                   │
+   │◄── "You're logged  │                     │                   │
+   │     into Jira!"    │                     │                   │
 ```
 
-### Using a Credential
+### Scenario 2: API Key Proxy (vault_api_request)
 
-When the agent calls `vault_login()`, Vault decrypts the password internally and fills the browser form via Chrome DevTools Protocol:
+The agent makes an API call. Vault injects the API key into headers — the key never appears in the LLM context.
 
-```mermaid
-sequenceDiagram
-    participant LLM as 🧠 LLM
-    participant Vault as 🔒 Vault MCP
-    participant Store as 🗄️ Encrypted Store
-    participant Chrome as 🖥️ Chrome (CDP)
-    participant Site as 🌍 Jira
-
-    LLM->>Vault: vault_login({ site_id: "jira" })
-    Vault->>Store: Decrypt credential
-    Store-->>Vault: { email, password }
-    Vault->>Chrome: Fill email field
-    Vault->>Chrome: Fill password field
-    Vault->>Chrome: Click submit
-    Chrome->>Site: POST login form
-    Site-->>Chrome: ✅ Dashboard loaded
-    Vault->>Chrome: Clear password from DOM
-    Vault-->>LLM: { status: "success", page_title: "Jira Dashboard" }
-    Note over LLM: Got only the status.<br/>Password stayed inside<br/>the Vault process.
+```
+  Claude Code           Vault MCP                  Stripe API
+   │                      │                            │
+   │── vault_api_request ►│                            │
+   │   service: "stripe"  │                            │
+   │   url: "/v1/charges" │                            │
+   │   method: "GET"      │                            │
+   │                      │── decrypt API key          │
+   │                      │                            │
+   │                      │── GET /v1/charges ────────►│
+   │                      │   Authorization:           │
+   │                      │   Bearer sk-live-****      │
+   │                      │                            │
+   │                      │◄── { data: [...] } ───────┤
+   │                      │                            │
+   │                      │── scan response            │
+   │                      │   for leaked key           │
+   │                      │   (replace with ***)       │
+   │                      │                            │
+   │◄── { status: ok,  ───┤                            │
+   │     body: "..." }    │                            │
+   │                      │                            │
+   │   (API key NOT in    │                            │
+   │    this response)    │                            │
 ```
 
-### API Requests
+### Scenario 3: Returning User (credentials already stored)
 
-For API keys, `vault_api_request()` injects the key into headers automatically:
+If credentials already exist, the agent skips `vault_add` and goes straight to `vault_login`:
 
-```mermaid
-sequenceDiagram
-    participant LLM as 🧠 LLM
-    participant Vault as 🔒 Vault MCP
-    participant API as 🌍 Stripe API
-
-    LLM->>Vault: vault_api_request("stripe", "/v1/charges", "GET")
-    Note over Vault: Decrypts API key internally<br/>Injects into Authorization header
-    Vault->>API: GET /v1/charges<br/>Authorization: Bearer sk-live-***
-    API-->>Vault: { data: [...] }
-    Note over Vault: Strips API key from response<br/>if it appears anywhere
-    Vault-->>LLM: { status: "success", body: "..." }
 ```
+  User              Claude Code           Vault MCP            Chrome
+   │                    │                     │                   │
+   │ "Open GitHub"      │                     │                   │
+   ├───────────────────►│                     │                   │
+   │                    │── vault_list() ────►│                   │
+   │                    │◄─ [{ siteId:       ─┤                   │
+   │                    │     "github",       │                   │
+   │                    │     active: true }] │                   │
+   │                    │                     │                   │
+   │                    │── vault_login ─────►│                   │
+   │                    │   { site: "github" }│── decrypt ───┐    │
+   │                    │                     │◄─────────────┘    │
+   │                    │                     │── CDP login ─────►│
+   │                    │                     │◄─ success ───────┤
+   │                    │◄─ { status: ok } ───┤                   │
+   │                    │                     │                   │
+   │◄── "Done!"         │                     │                   │
+```
+
+### Scenario 4: Credential Revocation
+
+Remove access instantly — the agent can no longer use the credential:
+
+```
+  Admin (CLI)           Vault MCP            Claude Code
+   │                      │                      │
+   │── vault-mcp remove   │                      │
+   │   "jira"             │                      │
+   │                      │── delete from store   │
+   │                      │── audit: removed      │
+   │◄── "Removed: jira"   │                      │
+   │                      │                      │
+   │                      │    ... later ...      │
+   │                      │                      │
+   │                      │◄── vault_login ──────┤
+   │                      │    { site: "jira" }  │
+   │                      │                      │
+   │                      │── { status: FAIL, ──►│
+   │                      │   "Credential not    │
+   │                      │    found: jira" }    │
+   │                      │                      │
+```
+
+### Scenario 5: Audit Trail
+
+Every credential use is logged with a tamper-proof hash chain:
+
+```
+  ~/.vault-mcp/audit.jsonl
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ evt_001 │ credential.created │ jira    │ success │ hash_1  │
+  │         │                    │         │         │    │    │
+  │ evt_002 │ credential.used    │ jira    │ success │    │    │
+  │         │ bot: claude        │         │         │    ▼    │
+  │         │                    │         │ prevHash: hash_1  │
+  │         │                    │         │         │ hash_2  │
+  │         │                    │         │         │    │    │
+  │ evt_003 │ credential.used    │ jira    │ success │    ▼    │
+  │         │ bot: claude        │         │ prevHash: hash_2  │
+  │         │                    │         │         │ hash_3  │
+  │         │                    │         │         │    │    │
+  │ evt_004 │ credential.removed │ jira    │ success │    ▼    │
+  │         │                    │         │ prevHash: hash_3  │
+  └─────────────────────────────────────────────────────────────┘
+
+  Modify any entry → hash chain breaks → tamper detected
+
+  $ vault-mcp audit
+  Chain integrity: VALID (4 entries)
+```
+
+---
 
 ## Quickstart
 
@@ -112,97 +225,81 @@ npm run build
 # 2. Register with Claude Code
 claude mcp add -s user vault -- node ~/path/to/vault-mcp/dist/index.js
 
-# 3. Use in Claude Code session
-# "Log me into GitHub" →
-#   Claude calls vault_add("github") → browser form opens → you enter password
-#   Claude calls vault_login("github") → Chrome logs in
-#   Claude sees only { status: "success" }
+# 3. Use in Claude Code
+#    "Log me into GitHub" →
+#    Claude calls vault_add("github") → browser form opens → you enter password
+#    Claude calls vault_login("github") → Chrome logs in via CDP
+#    Claude sees only { status: "success" }
 ```
 
-You can also add credentials via CLI (outside of Claude Code):
+Or add credentials via CLI (outside of Claude Code):
 
 ```bash
-node dist/index.js add --site github --email you@example.com --url https://github.com/login
-# Password is prompted interactively (masked)
+vault-mcp add --site github --email you@example.com --url https://github.com/login
+# Password is prompted interactively (masked with *)
 ```
 
 ## MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `vault_add(site_id?, service_type?)` | **Securely add credential.** Opens browser form — password never touches LLM. |
-| `vault_login(site_id)` | Log into a website via Chrome CDP. Returns only status. |
-| `vault_api_request(service, url, ...)` | Make API request with stored credentials injected. |
-| `vault_list()` | List all credentials (no secrets shown). |
-| `vault_status(site_id)` | Check credential status, last used, audit count. |
+| Tool | What it does | What the LLM sees |
+|------|-------------|-------------------|
+| `vault_add(site_id?)` | Opens browser form for secure credential entry | `{ status, site_id }` |
+| `vault_login(site_id)` | Logs into website via Chrome CDP | `{ status, page_title }` |
+| `vault_api_request(service, url, ...)` | Makes API call with injected credentials | `{ status, body }` |
+| `vault_list()` | Lists stored credentials | `[{ siteId, type, active }]` |
+| `vault_status(site_id)` | Shows credential metadata + audit stats | `{ siteId, active, lastUsed }` |
+
+**What the LLM never sees:** passwords, API keys, emails, tokens, encrypted data.
 
 ## CLI Commands
 
 ```bash
-vault-mcp add                        # Interactive: add credential
-vault-mcp add --site X --email Y     # Semi-interactive (password prompted)
+vault-mcp add                        # Interactive: add credential (password masked)
+vault-mcp add --site X --email Y     # Semi-interactive
 vault-mcp list                       # List credentials (no secrets)
 vault-mcp remove <site_id>           # Remove credential
-vault-mcp audit [site_id]            # View audit log
+vault-mcp audit [site_id]            # View audit log + chain integrity
 vault-mcp dashboard                  # Web UI on localhost:9900
-vault-mcp serve                      # Start MCP server (stdio, for debugging)
+vault-mcp serve                      # Start MCP server (for debugging)
 ```
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph "Claude Code"
-        LLM["🧠 LLM (Claude)"]
-    end
-
-    subgraph "Vault MCP Process"
-        MCP["MCP Server (stdio)"]
-        Tools["Tools: vault_add, vault_login,<br/>vault_api_request, vault_list, vault_status"]
-        Bridge["CDP Bridge (Playwright)"]
-        Crypto["AES-256-GCM Encryption"]
-        Audit["Audit Logger (SHA-256 hash chain)"]
-        Dashboard["Dashboard (localhost:9900)"]
-    end
-
-    subgraph "Local Storage (~/.vault-mcp/)"
-        Creds["credentials.json (encrypted)"]
-        Log["audit.jsonl (append-only)"]
-        Key[".master-key"]
-    end
-
-    subgraph "External"
-        Chrome["Chrome Browser (CDP)"]
-        Sites["Target Websites / APIs"]
-    end
-
-    LLM <-->|"commands & status only"| MCP
-    MCP --> Tools
-    Tools --> Bridge
-    Tools --> Crypto
-    Tools --> Audit
-    Tools --> Dashboard
-    Crypto <--> Creds
-    Audit --> Log
-    Key --> Crypto
-    Bridge <--> Chrome
-    Chrome <--> Sites
-
-    style LLM fill:#58a6ff,color:#fff
-    style Crypto fill:#3fb950,color:#fff
-    style Audit fill:#d29922,color:#fff
+```
+vault-mcp/
+├── src/
+│   ├── index.ts              ── Entry: CLI or MCP mode (auto-detect)
+│   ├── server.ts             ── MCP server, 5 tools registered
+│   ├── cli.ts                ── CLI commands (commander + inquirer)
+│   ├── tools/
+│   │   ├── vault-add.ts      ── Opens browser form, waits for submit
+│   │   ├── vault-login.ts    ── Decrypt → CDP → fill form → status
+│   │   ├── vault-api.ts      ── Decrypt → inject headers → fetch → sanitize
+│   │   ├── vault-list.ts     ── Return metadata only
+│   │   └── vault-status.ts   ── Metadata + audit stats
+│   ├── store/
+│   │   ├── encrypted-store.ts ── AES-256-GCM CRUD, JSON file backend
+│   │   └── keychain.ts        ── Master key: env var or auto-generate
+│   ├── browser/
+│   │   └── cdp-bridge.ts     ── Playwright connectOverCDP, form fill
+│   ├── audit/
+│   │   └── logger.ts         ── Append-only JSONL, SHA-256 hash chain
+│   └── dashboard/
+│       ├── server.ts         ── HTTP server (127.0.0.1:9900 only)
+│       ├── index.html        ── Full dashboard (CRUD + audit viewer)
+│       └── add.html          ── Focused add-credential form (for vault_add)
+└── test/                     ── 29 tests including credential sanitization
 ```
 
 ## Configuration
 
 | Env Variable | Default | Description |
 |-------------|---------|-------------|
-| `VAULT_MASTER_KEY` | (auto-generated) | Master encryption key. If not set, a random key is generated at `~/.vault-mcp/.master-key` |
+| `VAULT_MASTER_KEY` | (auto-generated) | Encryption key. Without it, a random key is saved to `~/.vault-mcp/.master-key` |
 | `VAULT_CDP_URL` | `http://localhost:9222` | Chrome DevTools Protocol endpoint |
 
-### Claude Code registration with env vars
-
 ```bash
+# Register with env vars
 claude mcp add -s user vault \
   -e VAULT_MASTER_KEY=my-secret-key \
   -e VAULT_CDP_URL=ws://localhost:9222 \
@@ -211,45 +308,34 @@ claude mcp add -s user vault \
 
 ## Storage
 
-All data is stored in `~/.vault-mcp/`:
-
-| File | Description |
-|------|-------------|
-| `credentials.json` | Encrypted credentials (AES-256-GCM, unique IV per entry) |
-| `audit.jsonl` | Append-only audit log with SHA-256 hash chain |
-| `.master-key` | Auto-generated master key (if no env var set) |
+```
+~/.vault-mcp/
+├── credentials.json    ── Encrypted credentials (AES-256-GCM, unique IV per entry)
+├── audit.jsonl         ── Append-only log with SHA-256 hash chain
+└── .master-key         ── Auto-generated master key (mode 0600)
+```
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for threat model and encryption details.
+See [SECURITY.md](SECURITY.md) for full threat model.
 
-### What Vault protects against
-
-- LLM context leakage — credentials never appear in agent's context window
-- Plaintext storage — everything encrypted with AES-256-GCM
-- Audit tampering — SHA-256 hash chain detects any modification
-- Accidental exposure — `vault_list` and `vault_status` never return secrets
-
-### What Vault does NOT protect against
-
-- User typing password directly in chat (bypasses Vault entirely)
-- Compromised host machine (root access = game over)
-- Malicious MCP client calling `vault_login` without authorization
+```
+  Protects against                 Does NOT protect against
+  ─────────────────                ────────────────────────
+  ✓ LLM context leakage           ✗ User typing password in chat
+  ✓ Plaintext credential storage   ✗ Compromised host (root access)
+  ✓ Audit log tampering            ✗ Malicious MCP client
+  ✓ Accidental exposure in logs    ✗ Browser-level memory attacks
+```
 
 ## Testing
 
 ```bash
-npm test          # Run all tests (29 tests)
-npm run test:watch # Watch mode
+npm test              # 29 tests
+npm run test:watch    # Watch mode
 ```
 
-### Test coverage
-
-- **Encryption round-trip** — encrypt → decrypt produces same data
-- **Wrong key detection** — different master key = decryption fails
-- **Credential sanitization** — `vault_list`, `vault_status`, `vault_login` responses NEVER contain passwords
-- **Hash chain integrity** — tampered audit entries are detected
-- **Full lifecycle** — add → list → use → remove → verify
+Tests verify: encryption round-trip, wrong-key rejection, credential sanitization in all tool responses, hash chain integrity, tamper detection, full lifecycle flows.
 
 ## License
 

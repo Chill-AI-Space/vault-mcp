@@ -1,0 +1,52 @@
+{
+  "name": "vault-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for credential isolation in LLM agents — bots use passwords without seeing them",
+  "type": "module",
+  "bin": {
+    "vault-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/dashboard/index.html dist/dashboard/",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "serve": "node dist/index.js serve",
+    "inspect": "npx @modelcontextprotocol/inspector dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "credentials",
+    "security",
+    "vault",
+    "llm",
+    "claude",
+    "ai-agent"
+  ],
+  "author": "ChillAI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chillai-space/vault-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "commander": "^13.0.0",
+    "inquirer": "^12.0.0",
+    "playwright": "^1.50.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

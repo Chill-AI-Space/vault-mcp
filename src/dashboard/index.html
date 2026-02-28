@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vault MCP Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 10px; }
+  h1 span { background: var(--accent); color: var(--bg); padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  h2 { font-size: 16px; margin: 24px 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: var(--bg); color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  tr:last-child td { border-bottom: none; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-active { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-inactive { background: rgba(248,81,73,0.15); color: var(--red); }
+  .badge-web { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .badge-api { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; }
+  button:hover { border-color: var(--accent); }
+  button.danger { border-color: var(--red); color: var(--red); }
+  button.danger:hover { background: rgba(248,81,73,0.15); }
+  .actions { display: flex; gap: 6px; }
+  .form-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .form-row label { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; color: var(--muted); font-size: 12px; }
+  .form-row input, .form-row select { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+  .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--accent); }
+  .empty { text-align: center; padding: 32px; color: var(--muted); }
+  .chain-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+  .chain-valid { background: rgba(63,185,80,0.15); color: var(--green); }
+  .chain-broken { background: rgba(248,81,73,0.15); color: var(--red); }
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 8px 16px; border-radius: 6px; cursor: pointer; background: transparent; color: var(--muted); border: none; font-size: 13px; }
+  .tab.active { background: var(--surface); color: var(--text); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<h1>Vault MCP <span>v0.1.0</span></h1>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('creds')">Credentials</button>
+  <button class="tab" onclick="showTab('audit')">Audit Log</button>
+</div>
+
+<div id="tab-creds">
+  <div class="form-card">
+    <h2 style="margin-top:0">Add Credential</h2>
+    <form id="add-form" onsubmit="return addCredential(event)">
+      <div class="form-row">
+        <label>Site ID <input name="siteId" required placeholder="github"></label>
+        <label>Type
+          <select name="serviceType" onchange="toggleType(this.value)">
+            <option value="web_login">Web Login</option>
+            <option value="api_key">API Key</option>
+          </select>
+        </label>
+      </div>
+      <div id="web-fields">
+        <div class="form-row">
+          <label>Email <input name="email" placeholder="user@example.com"></label>
+          <label>Password <input name="password" type="password" required></label>
+        </div>
+        <div class="form-row">
+          <label>Login URL <input name="loginUrl" placeholder="https://example.com/login"></label>
+        </div>
+        <div class="form-row">
+          <label>Email selector <input name="emailSel" value='input[type="email"]'></label>
+          <label>Password selector <input name="passwordSel" value='input[type="password"]'></label>
+          <label>Submit selector <input name="submitSel" value='button[type="submit"]'></label>
+        </div>
+      </div>
+      <div id="api-fields" class="hidden">
+        <div class="form-row">
+          <label>API Key <input name="apiKey" type="password"></label>
+          <label>Header name <input name="headerName" value="Authorization"></label>
+          <label>Prefix <input name="headerPrefix" value="Bearer "></label>
+        </div>
+      </div>
+      <button type="submit" style="margin-top:8px">Add Credential</button>
+    </form>
+  </div>
+
+  <table id="creds-table">
+    <thead><tr><th>Site ID</th><th>Type</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+    <tbody id="creds-body"></tbody>
+  </table>
+</div>
+
+<div id="tab-audit" class="hidden">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div id="chain-status"></div>
+    <div><label style="color:var(--muted);font-size:12px">Filter: <input id="audit-filter" oninput="loadAudit()" placeholder="site_id" style="padding:4px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--text)"></label></div>
+  </div>
+  <table>
+    <thead><tr><th>Event</th><th>Timestamp</th><th>Action</th><th>Site</th><th>Result</th><th>Details</th></tr></thead>
+    <tbody id="audit-body"></tbody>
+  </table>
+</div>
+
+<script>
+const API = '';
+
+function showTab(tab) {
+  document.getElementById('tab-creds').classList.toggle('hidden', tab !== 'creds');
+  document.getElementById('tab-audit').classList.toggle('hidden', tab !== 'audit');
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', (i === 0 && tab === 'creds') || (i === 1 && tab === 'audit')));
+  if (tab === 'audit') loadAudit();
+}
+
+function toggleType(type) {
+  document.getElementById('web-fields').classList.toggle('hidden', type !== 'web_login');
+  document.getElementById('api-fields').classList.toggle('hidden', type !== 'api_key');
+}
+
+async function loadCredentials() {
+  const res = await fetch(API + '/api/credentials');
+  const creds = await res.json();
+  const tbody = document.getElementById('creds-body');
+  if (creds.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty">No credentials stored</td></tr>';
+    return;
+  }
+  tbody.innerHTML = creds.map(c => `
+    <tr>
+      <td><strong>${esc(c.siteId)}</strong></td>
+      <td><span class="badge ${c.serviceType === 'web_login' ? 'badge-web' : 'badge-api'}">${c.serviceType}</span></td>
+      <td><span class="badge ${c.active ? 'badge-active' : 'badge-inactive'}">${c.active ? 'active' : 'inactive'}</span></td>
+      <td style="color:var(--muted)">${c.createdAt ? c.createdAt.split('T')[0] : ''}</td>
+      <td class="actions">
+        <button onclick="toggleCred('${esc(c.siteId)}', ${!c.active})">${c.active ? 'Disable' : 'Enable'}</button>
+        <button class="danger" onclick="removeCred('${esc(c.siteId)}')">Remove</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function loadAudit() {
+  const filter = document.getElementById('audit-filter').value;
+  const url = API + '/api/audit' + (filter ? '?siteId=' + encodeURIComponent(filter) : '');
+  const res = await fetch(url);
+  const { entries, chain } = await res.json();
+
+  const status = document.getElementById('chain-status');
+  status.innerHTML = chain.valid
+    ? `<span class="chain-status chain-valid">Chain: VALID (${chain.totalEntries} entries)</span>`
+    : `<span class="chain-status chain-broken">Chain: BROKEN at entry ${chain.brokenAt}</span>`;
+
+  const tbody = document.getElementById('audit-body');
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No audit entries</td></tr>';
+    return;
+  }
+  tbody.innerHTML = entries.map(e => `
+    <tr>
+      <td style="color:var(--muted)">${esc(e.eventId)}</td>
+      <td style="color:var(--muted)">${e.timestamp.replace('T',' ').slice(0,19)}</td>
+      <td>${esc(e.action)}</td>
+      <td><strong>${esc(e.credentialId)}</strong></td>
+      <td><span class="badge ${e.result === 'success' ? 'badge-active' : 'badge-inactive'}">${e.result}</span></td>
+      <td style="color:var(--muted)">${esc(e.details || '')}</td>
+    </tr>
+  `).join('');
+}
+
+async function addCredential(e) {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const type = f.get('serviceType');
+  const body = { siteId: f.get('siteId'), serviceType: type };
+  if (type === 'web_login') {
+    Object.assign(body, {
+      email: f.get('email'), password: f.get('password'),
+      loginUrl: f.get('loginUrl'),
+      selectors: { email: f.get('emailSel'), password: f.get('passwordSel'), submit: f.get('submitSel') }
+    });
+  } else {
+    Object.assign(body, { apiKey: f.get('apiKey'), headerName: f.get('headerName'), headerPrefix: f.get('headerPrefix') });
+  }
+  await fetch(API + '/api/credentials', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  e.target.reset();
+  loadCredentials();
+}
+
+async function toggleCred(siteId, active) {
+  await fetch(API + '/api/credentials/' + encodeURIComponent(siteId), {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active })
+  });
+  loadCredentials();
+}
+
+async function removeCred(siteId) {
+  if (!confirm('Remove credential "' + siteId + '"?')) return;
+  await fetch(API + '/api/credentials/' + encodeURIComponent(siteId), { method: 'DELETE' });
+  loadCredentials();
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+loadCredentials();
+</script>
+</body>
+</html>
